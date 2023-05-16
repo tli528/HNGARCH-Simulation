@@ -1,0 +1,237 @@
+---
+title: "HNGARCH Simulation"
+author: "Tianhao Li"
+date: "2/13/2022"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+```
+
+## Heston-Nandi Univariate GARCH Simulation
+
+This code will focus on one-dimentional first-order case as HNGARCH($p = 1, q = 1$).
+
+# The model
+
+$log(S(t)) = log(S(t-\Delta))+r+\lambda h(t)+\sqrt{h(t)} z(t)$\
+where $z(t)$ is a standard normal disturbance\
+and $h(t) = \omega_1 + \beta_1 h(t-\Delta) -  \alpha_1 (z(t-\Delta) - \gamma_1 \sqrt{h(t-\Delta)}^2)$\
+is the conditional variance of the log return between $t-\Delta$ and t, which will be stationary.\
+
+**Input variables:theta = [lambda, omega, beta, alpha, gamma], r, h(0), Delta, T**\  
+
+1. $\theta$:
+  + $\lambda$: risk premium factor
+  + $\alpha_1$: the kurtosis of the distribution where $\alpha_1 = 0$ implies a deterministic time varying variance.
+  + $\gamma_1$: asymmetric influence of assets.
+  + $\omega, \beta$: The parameters of AR component of $h(t)$ process, where a part of next-period conditional variance $h(t+1) = \omega + proportional \ \beta h(t)$
+
+2. $r$: continuously compounded interest rate for the time interval $\Delta$.
+3. $h(0)$: the initial value of h(t) in recursive equation.
+4. $\Delta$: Time frequency in terms of a year.
+5. $T$: Time range in year.\
+
+Output variables:
+$R(t)$ (Simulated return), $h(t) \  and \ z(t)$.
+
+```{r sim}
+HNGARCH_sim <- function(theta, r, h_init, Delta, T, seed = 123){
+  set.seed(seed)
+  # Number of expected obervations
+  N <- T/Delta
+  
+  # Extract each parameter from the input prameter list theta
+  lambda <- theta$lambda
+  omega <- theta$omega
+  beta <- theta$beta
+  alpha <- theta$alpha
+  gamma <- theta$gamma
+  
+  # Generate z as a random normal noise
+  z <- rnorm(1 * N, 0, 1)
+  
+  # Pre-allocation for Return R(t) and h(t) process
+  ret <- rep(0, 1*N)
+  h <- rep(0, 1*(N+1))
+  
+  # Set the initial value for h
+  h[1] <- h_init
+  
+  # Simulate h(t) process
+  for (i in 1:N) {
+    ret[i] <- r + lambda*h[i]+ sqrt(h[i])*z[i]
+    h[i+1] <- omega + beta * h[i] + alpha * (z[i] - gamma * sqrt(h[i]))^2
+  }
+  
+  return(ret)
+}
+```
+
+```{r test}
+# Set up vlues for parameters, Delta, and time range of the expected simulation
+# simulating 2-year daily returns
+theta_test <- list(lambda = 150, omega = 8e-05, alpha = 6e-05, 
+          beta = 0.7, gamma = -10)
+Delta <- 1/256
+T <- 10
+ret_data <- HNGARCH_sim(theta_test, r = 0, h_init = 1e-04, Delta = Delta, T = T)
+
+ret.df <- data.frame(return = ret_data, time = 1:(T/Delta))
+
+# Plot the returns
+ggplot(data=ret.df, aes(x=time, y=return)) + geom_line() +
+  ggtitle("Simulation of HNGARCH(1,1)") + theme(plot.title = element_text(hjust = 0.5))
+
+# simulating 2-year weekly returns
+theta_test2 <- list(lambda = 150, omega = 8e-05, alpha = 6e-05, 
+          beta = 0.7, gamma = -10)
+Delta2 <- 1/51
+T2 <- 10
+ret_data2 <- HNGARCH_sim(theta_test2, r = 0, h_init = 1e-04, Delta = Delta2, T = T2)
+
+ret.df2 <- data.frame(return = ret_data2, time = 1:(T2/Delta2))
+
+# Plot the returns
+ggplot(data=ret.df2, aes(x=time, y=return)) + geom_line() +
+  ggtitle("Simulation of HNGARCH(1,1)") + theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+## Heston-Nandi Univariate GARCH Recover through maximum likelihood estimation  
+
+1. Deriving the MLE formulas:\
+  From the HNGARCH model, it is known that\
+  $R(t)= \frac{S_{t+1}}{S_{t}}= X_{t+1}-X_{t} = r+\lambda h(t)+\sqrt{h(t)}z(t), \quad z(t) \sim \mathbf{N} (0,1)$\
+  where z(t) is i.i.d. standard Gaussian distributed random variables.
+  
+  Therefore, $z(t)=\frac{R(t)-r-\lambda h(t)}{\sqrt{h(t)}}$ \
+  $h(t+1)=\omega+\beta h(t)+\alpha (z(t)-\gamma \sqrt{h(t)})^2$ \
+  
+  Since $log(\frac{S_{t+1}}{S_{t}})$ is normal distributed,
+  the distribution for $R(t)$ is then $\mathcal{N} (r+\lambda h(t), h(t))$. \
+  In terms of mixed frequency, the density function for $i$-th observation in $T$ is \
+  $f(R_{i};\theta) = \frac{1}{\sqrt{2\pi h_{i}}}exp\{-(\frac{z_{i}}{\sqrt{2}})^2 \}$ \
+  where $R_{t{i}}$ represents the the historical index returns at one of the frequencies.\
+  And,\
+  $z_{i} = \frac{R_{i}-r-\lambda h_{i}}{\sqrt{h_{i}}}$\
+  $h_{i} = \omega + \beta h_{i-1} +\alpha (z_{i-1}-\gamma \sqrt{h_{i-1}})^2$\
+  $r$ is the varied interest rate at different frequency determined by $\frac{\overline{R_{i}}}{100 \times 252}$.\  
+  
+  The maximum log-likelihood function for Heston Nandi GARCH(1,1) is derived as:\
+  $\mathcal{L}(R;\theta) = \prod_{i=1}^{T} l_{i}(R_{i};\theta)= \prod_{i=1}^{T} \frac{1}{\sqrt{2\pi h_{i}}}\exp\{- \frac{(R_{i}-r-\lambda h_{i})^2}{2 h_{i}}\}$ \
+  $log\mathcal{L}(R;\theta)  = \sum_{i=1}^{T}-0.5({log(2 \pi h_{i}) + \frac{(R_{i} - r - \lambda h_{i})^2}{h_{i}}})$\  
+  
+  In order to maximize, $\hat{\theta}$ is achieved through optimization：\
+  $\hat{\theta} = \arg\max log\mathcal{L}(R;\theta)$  
+  
+
+# The built-in function hngarchFit has been used to find the optimized theta through maximizing likelihood function, which returns a list with two entries: The estimated model parmeters and the value of the log likelihood.
+```{r recover}
+library(fOptions)
+sigma2_daily <- var(ret.df$return)
+mle_daily <- hngarchFit(x = ret.df$return, model = list(lambda = -0.5, omega = 
+      sigma2_daily, alpha = 0.1*sigma2_daily, beta = 0.1, gamma = 0, rf = 0),
+      symmetric = FALSE)
+mle_daily$estimate
+sim.df.daily <- data.frame(theta = mle_daily$estimate)
+mle_daily$minimum
+
+sigma2_weekly <- var(ret.df2$return)
+mle_weekly <- hngarchFit(x = ret.df2$return, model = list(lambda = -0.5, omega = 
+        sigma2_weekly, alpha = 0.1*sigma2_weekly, beta = 0.1, gamma = 0, rf = 0),
+        symmetric = FALSE)
+mle_weekly$estimate
+sim.df.weekly <- data.frame(theta = mle_weekly$estimate)
+mle_weekly$minimum
+```
+*Comments: We can now covering the parameters in symmetrical distributions with respect to daily and weekly frequencies*  
+
+
+## Calculating the standard error
+**Instead computing for the expected value of Fihser Information Matrix, we can take the average of the second partial derivatives with respect to the gradient matrix due to the recursive charactersistics of the log-likelihood function.**
+$$
+\mathcal{J}({\theta}) = - \frac{1}{N} \sum_{i=1}^{N} \frac{\partial^2}{\partial \theta \partial \theta'}log(l(R_i;\theta)) \\
+which\ is\ evaluated\ at\ the\ maximum\ likelihood\ estimator\ \hat{\theta}\\
+equivalently,\\
+\mathcal{J}({\theta})^{-1} = \sum_{i=1}^{N} (\frac{\partial}{\partial \theta} log(l(R_i;\theta))) (\frac{\partial}{\partial \theta'} log(l(R_i;\theta)))\\
+=(\frac{\partial}{\partial \theta} log\mathcal{L}(R_i;\theta)) (\frac{\partial}{\partial \theta'} log \mathcal{L}(R_i;\theta))\\
+We\ can\ then\ find\ the\ diagnoal\ of\ the\ Hessian\ matrix\\
+D(\mathcal{J}({\theta})^-1)= - \frac{1}{2} \frac{log\mathcal{L}(R_i;\theta + \Delta) - log\mathcal{L}(R_i;\theta - \Delta)}{\Delta \theta}\\
+Therefore,\ the\ gradient\ can\ be\ calculated\ as\ D^2\\
+And,\ the\ estimated\ standard\ error\ is\\
+se = \sqrt{\frac{1}{D^2}}
+$$
+
+```{r lik}
+get_loglikelihood <- function(theta, r, h_init, ret){
+  
+  # Number of returns
+  N = length(ret)
+  
+  # Extract each parameter from the input prameter list theta
+  lambda <- theta$lambda
+  omega <- theta$omega
+  beta <- theta$beta
+  alpha <- theta$alpha
+  gamma <- theta$gamma
+  
+  # Pre-allocation for Return z(t) and h(t) process
+  h <- rep(0, 1*(N+1))
+  h[1] <- h_init
+  z <- rep(0, 1*(N))
+  
+  # The process for Z(t) and h(t)
+  for (i in 1:N) {
+    z[i] = (ret[i] - r - lambda * h[i]) / sqrt(h[i])
+    h[i+1] = omega + beta * h[i] + alpha * (z[i] - gamma * sqrt(h[i]))^2
+  }
+  
+  # Log-likehood function
+  log_lik = sum(-0.5 * (log(2*pi*h[1:N]) + z^2))
+  
+  return(log_lik)
+}
+```
+
+```{r gradient}
+# This function takes the optimal parameter list theta, tolerance, interest rate, initial value of h and simulated return
+# And it calculates the standard error from the recovered to the true parameter based on the maximum likelihood function
+get_std <- function(theta_hat, tol, r, h_init, ret){
+  delta_theta = list(0)
+  gradient = numeric(length(theta_hat))
+  for (i in 1:length(theta_hat)) {
+    theta_forward = theta_backward = theta_hat
+    delta_theta[[i]] = abs(theta_hat[[i]]*tol)
+    theta_forward[[i]] = theta_forward[[i]] + delta_theta[[i]]
+    theta_backward[[i]] = theta_backward[[i]] - delta_theta[[i]]
+    gradient[i] = -0.5*((get_loglikelihood(theta_forward, r, h_init, ret) - 
+                          get_loglikelihood(theta_backward, r, h_init, ret))
+                        /delta_theta[[i]])
+  }
+  std = sqrt(1/gradient^2)
+  return(std)
+}
+```
+
+```{r error calculation}
+# standard error of 2-year daily returns parameters estimations (simulation based)
+theta_daily <- as.list(mle_daily$estimate)
+std_daily <- get_std(theta = theta_daily, tol = 0.0001, r = 0, h_init = 1e-04, ret = ret_data)
+std.df.daily <- data.frame(std = std_daily)
+std.df.daily
+
+# standard error of 2-year weekly returns parameters estimations (simulation based)
+theta_weekly <- as.list(mle_weekly$estimate)
+std_weekly <- get_std(theta = theta_weekly, tol = 0.0001, r = 0, h_init = 1e-04, ret = ret_data2)
+std.df.weekly <- data.frame(std = std_weekly)
+std.df.weekly
+```
+##Observations:\
+**1. Overall, the performance of the estimations on recovering the parameters have a excellent performance, which is reflected in the relatively small standard error when compared to the true parameters. However, we can see the inconsistency on $\gamma$ with the change in frequency, therefore, we can assume that the frequency has impact on $\gamma$, which needs further investigations.**\
+**2. Secondly, the standard error highly depends on the initial setting of parameters in simulation, especially $\alpha$ and $\gamma$. The standard error only stablizes for a large value of $\alpha$ and a negative value of $\gamma$ when applying in the symmetric model.**\
+**3. In the empirical study, we always rescale the input parameters for log-likelihood function, which was stated to make optimization efficient. However, this time, I found the rescaling would result in unreliable standard error that could not be convinced to calculate the confidence interval later. Moreover, the results I obtained without rescaling actually are more convincing and reliable.**

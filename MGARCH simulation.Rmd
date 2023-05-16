@@ -1,0 +1,83 @@
+---
+title: "Affine MGARCH Simulation"
+author: "Tianhao Li"
+date: "2/8/2022"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Simulation function
+
+**Notes**
+**Inputs: theta = [lambda, omega, beta, alpha, gamma], rf, h_init, N, T**\
+1. $\theta$:
+  + $\lambda$: risk premium factor
+  + $\omega, \beta, \alpha, \gamma$: GARCH parameters with respect to conditional variances.
+2. rf: risk-free interest rate\
+3. h_init: initial h value for generating h[i,j] matrix\
+4. N: number of assets\
+5. T: simulation time horizon\
+
+**Outputs: simulated return, h and z**
+1. simulated return: $R_t$
+2. simulated z: random normal varaibles
+3. h: 
+```{r}
+MHNGARCH_sim <- function(theta, rf, h_init, N, T){
+    
+    set.seed(123)
+    
+    # Generate z as a random normal matrix with N*T dimension
+    z <- rnorm(N * T, 0, 1)
+    z <- matrix(z, nrow = N)
+    
+    # Vectorize GARCH parameters
+    w <- rep(theta$omega, N)
+    beta <- rep(theta$beta, N)
+    alpha <- rep(theta$alpha, N)
+    gamma <- rep(theta$gamma, N)
+    
+    # Generate lambda matrix as N*N dimension
+    lambda <- rep(theta$lambda, N*N)
+    lambda.matrix <- matrix(lambda, nrow = N)
+    
+    # Determine A_NN matrix
+    A <- rep(theta$a, N*N)
+    A.matrix <- matrix(A, nrow = N)
+    
+    # Generate the first column of h
+    h <- matrix(rep(0, N*T), nrow = N)
+    h[, 1] <- rep(h_init, N)
+    
+    # Get h matrix as GARCH time series with all parameters
+    for (t in 2:T) {
+    h[, t] <- w + beta * h[, t-1] + alpha * (z[, t-1] - gamma * sqrt(h[, t-1]))^2
+    }
+    
+    # Generate epsilon as a random normal matrix
+    epsilon <- sqrt(h) * z
+    
+    # Get simulated return
+    ret <- rf + lambda.matrix %*% h + A.matrix %*% epsilon
+    ret_sim <- matplot(t(ret), type = "l")
+    
+  return(ret_sim)
+
+
+}
+```
+
+```{r test}
+# Testify the simulation function
+theta_test <- list(lambda = 4, omega = 8e-5, alpha = 6e-5,
+             beta = 0.7, gamma = 0, a = 1)
+
+MHNGARCH_sim(theta_test, rf = 0, h_init = 1e-04, N = 4, T = 5000)
+
+
+```
